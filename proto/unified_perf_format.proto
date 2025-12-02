@@ -1,0 +1,72 @@
+syntax = "proto3";
+
+package unified_perf_format;
+
+message Stage{
+    string name = 1;
+    string title = 2;
+    uint64 order_id = 3;
+    uint64 start_time = 4;
+    uint64 end_time = 5;
+    map<string, string> metadata = 6;
+};
+
+message Instruction{
+    uint32 thread_id = 1;
+    uint64 global_seq_num = 2;
+    string device_name = 3;
+    string name = 4;
+    string title = 5;
+    repeated uint64 parent_seq_num = 7;
+    map<string, string> metadata = 8;
+    repeated Stage stages = 9;
+};
+
+enum InstType{
+   UNKNOWN = 0;
+   CALL=1;
+   RET=2;
+   POINT_SHOW = 3;
+};
+
+message Function{
+    string device_name = 1;
+    uint32 thread_id = 2;
+    uint64 global_seq_num = 3;
+    uint64 pc = 4;
+    InstType instType = 5;
+    string title = 6;
+    map<string, string> metadata = 7;
+};
+
+message Counter{
+    string name = 1;
+    string title =2 ;
+    string unit = 3;
+    repeated uint64 values = 4;
+    map<string, string> metadata = 5;
+};
+
+message BatchInstruction{
+    repeated Instruction instructions = 1;
+};
+
+message BatchFunction{
+    repeated Function functions = 1;
+};
+
+message BatchCounter{
+    repeated Counter counters = 1;
+};
+
+message AllInstructions{
+    map<string , BatchInstruction> batch_instructions = 1;
+};
+
+message AllFunctions{
+    map<string , BatchFunction> batch_functions = 1;
+};
+
+message AllCounters{
+    map<string , BatchCounter> batch_counters = 1;
+};

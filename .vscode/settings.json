@@ -1,0 +1,54 @@
+{
+    // "editor.formatOnSave": true,
+    "explorer.confirmDelete": false,
+    "explorer.confirmDragAndDrop": false,
+    "files.autoSave": "afterDelay",
+    // "workbench.colorTheme": "Monokai Dimmed",
+    "git.ignoreLegacyWarning": true,
+    "extensions.autoUpdate": false,
+    "diffEditor.ignoreTrimWhitespace": true,
+    "verilog.linting.linter": "verilator",
+    "C_Cpp.default.includePath": [
+        "${workspaceFolder}/**"
+    ],
+    "terminal.integrated.defaultProfile.windows": "Bash",
+    "terminal.integrated.defaultProfile.linux": "bash",
+    "editor.lineHeight": 26,
+    "git.autofetch": true,
+    "window.zoomLevel": 0,
+    "editor.largeFileOptimizations": false,
+    "C_Cpp.errorSquiggles": "disabled",
+    "clangd.arguments": [
+        "--background-index",
+        "--compile-commands-dir=build/RISCV",
+        "-j=8",
+        // 告诉clangd用那个clang进行编译，路径参考which clang++的路径
+        // "--query-driver=/usr/bin/clang++",
+        "--query-driver=/usr/bin/g++",
+        // clang-tidy功能
+        "--clang-tidy",
+        "--clang-tidy-checks=performance-*,bugprone-*",
+        // 全局补全（会自动补充头文件）
+        "--all-scopes-completion",
+        // 更详细的补全内容
+        "--completion-style=detailed",
+        // 补充头文件的形式
+        "--header-insertion=iwyu",
+        // pch优化的位置
+        // "--pch-storage=disk",
+    ],
+    "clangd.fallbackFlags": [
+        "-std=c++17",
+        "-I${workspaceFolder}/build/RISCV",
+        "-I${default}",
+    ],
+    "clangd.path": "/usr/bin/clangd-15",
+    "[cpp]": {
+        "editor.defaultFormatter": "llvm-vs-code-extensions.vscode-clangd"
+    },
+    "clangd.detectExtensionConflicts": true, // 当其它拓展与 clangd 冲突时警告并建议禁用
+    "editor.suggest.snippetsPreventQuickSuggestions": true,
+    "git.ignoreLimitWarning": true,
+  "cmake.configureOnOpen": false,
+  "commentTranslate.hover.enabled": true,
+  }
