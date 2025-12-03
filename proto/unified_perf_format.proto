@@ -34,7 +34,7 @@ message Function{
     uint32 thread_id = 2;
     uint64 global_seq_num = 3;
     uint64 pc = 4;
-    InstType instType = 5;
+    InstType inst_type = 5;
     string title = 6;
     map<string, string> metadata = 7;
 };
@@ -59,14 +59,17 @@ message BatchCounter{
     repeated Counter counters = 1;
 };
 
-message AllInstructions{
-    map<string , BatchInstruction> batch_instructions = 1;
-};
-
-message AllFunctions{
-    map<string , BatchFunction> batch_functions = 1;
-};
-
-message AllCounters{
-    map<string , BatchCounter> batch_counters = 1;
-};
+message UnifiedPerfData{
+    enum DataType{
+        INSTRUCTIONS = 0;
+        FUNCTIONS = 1;
+        COUNTERS = 2;
+    };
+    DataType data_type = 1;
+    string device_name = 2;
+    oneof payload{
+        BatchInstruction instructions = 3;
+        BatchFunction functions = 4;
+        BatchCounter counters = 5;
+    };
+}
