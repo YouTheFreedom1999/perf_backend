@@ -42,17 +42,7 @@ public:
    * @param file_name 输入文件路径
    */
   void traceCounters(const std::string &file_name);
-
-  /**
-   * 追踪所有类型的数据（Instructions, Functions, Counters）
-   * @param instructions_file Instructions 文件路径
-   * @param functions_file Functions 文件路径（可选，为空则跳过）
-   * @param counters_file Counters 文件路径（可选，为空则跳过）
-   */
-  void traceAll(const std::string &instructions_file,
-                const std::string &functions_file = "",
-                const std::string &counters_file = "");
-
+  
 private:
   /**
    * 处理单个 Instruction 并添加到追踪
@@ -62,22 +52,6 @@ private:
   void processInstruction(const unified_perf_format::Instruction &inst,
                           perfetto::Track &parent_track);
   void processPipMode(const unified_perf_format::BatchInstruction &batch_instruction,
-                      perfetto::Track &parent_track);
-
-  /**
-   * 处理单个 Function 并添加到追踪
-   * @param func Function 对象引用
-   * @param parent_track 父轨道
-   */
-  void processFunction(const unified_perf_format::Function &func,
-                       perfetto::Track &parent_track);
-
-  /**
-   * 处理单个 Counter 并添加到追踪
-   * @param cnt Counter 对象引用
-   * @param parent_track 父轨道
-   */
-  void processCounter(const unified_perf_format::Counter &cnt,
                       perfetto::Track &parent_track);
 
   PerfettoWrapper perfetto_wrapper_;

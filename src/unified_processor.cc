@@ -31,9 +31,7 @@ void ReadInstructions() {
         const Instruction& inst = batch.instructions(i);
         std::cout << "Instruction #" << i << ":" << std::endl;
         std::cout << "  Name: " << inst.name() << std::endl;
-        std::cout << "  Title: " << inst.title() << std::endl;
         std::cout << "  GlobalSeq: " << inst.global_seq_num() << std::endl;
-        std::cout << "  Device: " << inst.device_name() << std::endl;
         std::cout << "  ThreadID: " << inst.thread_id() << std::endl;
         if (inst.parent_seq_num_size() > 0) {
             std::cout << "  ParentSeqNums: ";
@@ -42,13 +40,16 @@ void ReadInstructions() {
             }
             std::cout << std::endl;
         }
-        if (inst.metadata().count("kernel_size")) {
-            std::cout << "  Metadata[kernel_size]: " << inst.metadata().at("kernel_size") << std::endl;
+        for (auto [key, value] : inst.metadata()) {
+            std::cout << "  Metadata[" << key << "]: " << value << std::endl;
         }
         for (int j = 0; j < inst.stages_size(); ++j) {
              const Stage& stage = inst.stages(j);
              std::cout << "    Stage[" << stage.order_id() << "]: " << stage.name() 
                        << " [" << stage.start_time() << " - " << stage.end_time() << "]" << std::endl;
+            for (auto [key, value] : stage.metadata()) {
+                std::cout << "      Metadata[" << key << "]: " << value << std::endl;
+            }
         }
     }
 }
@@ -76,12 +77,12 @@ void ReadFunctions() {
     for (int i = 0; i < batch.functions_size(); ++i) {
         const Function& func = batch.functions(i);
         std::cout << "Function #" << i << ":" << std::endl;
-        std::cout << "  Title: " << func.title() << std::endl;
-        std::cout << "  Device: " << func.device_name() << std::endl;
         std::cout << "  ThreadID: " << func.thread_id() << std::endl;
-        std::cout << "  GlobalSeq: " << func.global_seq_num() << std::endl;
         std::cout << "  PC: " << std::hex << func.pc() << std::dec << std::endl;
         std::cout << "  Type: " << static_cast<int>(func.inst_type()) << std::endl;
+        for (auto [key, value] : func.metadata()) {
+            std::cout << "  Metadata[" << key << "]: " << value << std::endl;
+        }
     }
 }
 
@@ -109,13 +110,15 @@ void ReadCounters() {
         const Counter& cnt = batch.counters(i);
         std::cout << "Counter #" << i << ":" << std::endl;
         std::cout << "  Name: " << cnt.name() << std::endl;
-        std::cout << "  Title: " << cnt.title() << std::endl;
         std::cout << "  Unit: " << cnt.unit() << std::endl;
         std::cout << "  Values: ";
-        for (auto val : cnt.values()) {
-            std::cout << val << " ";
+        for (auto value : cnt.values()) {
+            std::cout << "[" << value.timestamp() << ", " << value.value() << "] ";
         }
         std::cout << std::endl;
+        for (auto [key, value] : cnt.metadata()) {
+            std::cout << "  Metadata[" << key << "]: " << value << std::endl;
+        }
     }
 }
 

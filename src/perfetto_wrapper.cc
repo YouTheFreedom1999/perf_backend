@@ -2,6 +2,7 @@
 #include <cstdio>
 #include <fstream>
 #include <iostream>
+#include <string>
 #include <vector>
 
 PerfettoWrapper::PerfettoWrapper()
@@ -97,29 +98,53 @@ void PerfettoWrapper::addCounterEvent(perfetto::CounterTrack &track,
   TRACE_COUNTER("cpu.common", track, cycle, value);
 }
 
-void PerfettoWrapper::addTraceEvent(const std::string &title_name,
-                                    perfetto::NamedTrack &track,
-                                    uint64_t start_cycle, uint64_t end_cycle,
-                                    const std::string &msg) {
+void PerfettoWrapper::addTraceEvent(
+    const std::string &title_name, perfetto::NamedTrack &track,
+    uint64_t start_cycle, uint64_t end_cycle,
+    const google::protobuf::Map<std::string, std::string> &common_metadata,
+    const google::protobuf::Map<std::string, std::string> &metadata) {
 
-  TRACE_EVENT_BEGIN("cpu.common", perfetto::DynamicString(title_name), track,
-                    start_cycle, "msg", perfetto::DynamicString(msg));
+  TRACE_EVENT_BEGIN(
+      "cpu.common", perfetto::DynamicString(title_name), track, start_cycle,
+      [&](perfetto::EventContext ctx) {
+        for (const auto &pair : common_metadata) {
+          auto *da = ctx.event()->add_debug_annotations();
+          da->set_name(pair.first.c_str());          // 注解键
+          da->set_string_value(pair.second.c_str()); // 注解值（字符串）
+        }
+        for (const auto &pair : metadata) {
+          auto *da = ctx.event()->add_debug_annotations();
+          da->set_name(pair.first.c_str());          // 注解键
+          da->set_string_value(pair.second.c_str()); // 注解值（字符串）
+        }
+      });
+
   TRACE_EVENT_END("cpu.common", track, end_cycle);
   std::cout << "addTraceEvent: " << title_name << " " << start_cycle << " "
-            << end_cycle << " " << msg << std::endl;
+            << end_cycle << std::endl;
 }
 
-void PerfettoWrapper::addTraceEventWithFlow(const std::string &title_name,
-                                            perfetto::NamedTrack &track,
-                                            uint64_t start_cycle,
-                                            uint64_t end_cycle,
-                                            uint64_t flow_id,
-                                            const std::string &msg) {
+void PerfettoWrapper::addTraceEventWithFlow(
+    const std::string &title_name, perfetto::NamedTrack &track,
+    uint64_t start_cycle, uint64_t end_cycle, uint64_t flow_id,
+    const google::protobuf::Map<std::string, std::string> &common_metadata,
+    const google::protobuf::Map<std::string, std::string> &metadata) {
 
-  TRACE_EVENT_BEGIN("cpu.common", perfetto::DynamicString(title_name), track,
-                    start_cycle,
-                    perfetto::Flow::Global(flow_id + (flow_range_id_ << 32)),
-                    "msg", perfetto::DynamicString(msg));
+  TRACE_EVENT_BEGIN(
+      "cpu.common", perfetto::DynamicString(title_name), track, start_cycle,
+      perfetto::Flow::Global(flow_id + (flow_range_id_ << 32)),
+      [&](perfetto::EventContext ctx) {
+        for (const auto &pair : common_metadata) {
+          auto *da = ctx.event()->add_debug_annotations();
+          da->set_name(pair.first.c_str());          // 注解键
+          da->set_string_value(pair.second.c_str()); // 注解值（字符串）
+        }
+        for (const auto &pair : metadata) {
+          auto *da = ctx.event()->add_debug_annotations();
+          da->set_name(pair.first.c_str());          // 注解键
+          da->set_string_value(pair.second.c_str()); // 注解值（字符串）
+        }
+      });
   TRACE_EVENT_END("cpu.common", track, end_cycle);
   flow_range_id_++;
 }

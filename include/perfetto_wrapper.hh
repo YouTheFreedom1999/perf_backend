@@ -5,6 +5,7 @@
 #include <string>
 #include <vector>
 #include "trace_categories.h"
+#include "unified_perf_format.pb.h"
 
 /**
  * PerfettoWrapper 类：封装 perfetto 追踪接口
@@ -80,7 +81,8 @@ public:
         perfetto::NamedTrack& track,
         uint64_t start_cycle,
         uint64_t end_cycle,
-        const std::string& msg = "");
+        const google::protobuf::Map<std::string, std::string>& common_metadata,
+        const google::protobuf::Map<std::string, std::string>& metadata);
 
     /**
      * 添加带流控制的追踪事件
@@ -97,7 +99,8 @@ public:
         uint64_t start_cycle,
         uint64_t end_cycle,
         uint64_t flow_id,
-        const std::string& msg = "");
+        const google::protobuf::Map<std::string, std::string>& common_metadata,
+        const google::protobuf::Map<std::string, std::string>& metadata);
 
     /**
      * 获取系统轨道（根轨道）
