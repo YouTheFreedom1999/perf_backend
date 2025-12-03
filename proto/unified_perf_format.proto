@@ -73,3 +73,8 @@ message UnifiedPerfData{
         BatchCounter counters = 5;
     };
 }
+
+// 容器消息：包含多个 UnifiedPerfData，用于在一个文件中存储多种类型的数据
+message UnifiedPerfDataContainer{
+    repeated UnifiedPerfData data_list = 1;
+}

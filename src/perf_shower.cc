@@ -1,5 +1,6 @@
 #include "perf_shower.hh"
 #include "unified_perf_format.pb.h"
+#include "../lib/json.hpp"
 #include <algorithm>
 #include <cassert>
 #include <fstream>
@@ -9,8 +10,20 @@
 #include <queue>
 #include <utility>
 #include <vector>
+#include <sstream>
+#include <set>
+#include <fcntl.h>
+#include <unistd.h>
+#include <google/protobuf/io/coded_stream.h>
+#include <google/protobuf/io/zero_copy_stream_impl.h>
 
 using namespace unified_perf_format;
+using google::protobuf::io::FileInputStream;
+using google::protobuf::io::CodedInputStream;
+using json = nlohmann::json;
+
+// 注意：已不再使用带长度前缀的读取方式
+// 现在使用 UnifiedPerfDataContainer 容器消息，可以直接用 ParseFromIstream 读取
 
 typedef const google::protobuf::Map<std::string, std::string> MetadataMap;
 
@@ -35,174 +48,6 @@ void PerfShower::finish(const std::string &output_path) {
   }
 }
 
-void PerfShower::traceInstructions(const std::string &file_name) {
-  if (!initialized_) {
-    std::cerr << "错误：请先调用 init() 初始化" << std::endl;
-    return;
-  }
-
-  UnifiedPerfData perf_data;
-  std::ifstream input(file_name, std::ios::in | std::ios::binary);
-
-  if (!input.is_open()) {
-    std::cerr << "错误：无法打开文件 " << file_name << std::endl;
-    return;
-  }
-
-  if (!perf_data.ParseFromIstream(&input)) {
-    std::cerr << "错误：解析文件失败 " << file_name << std::endl;
-    return;
-  }
-
-  // 检查数据类型
-  if (perf_data.data_type() != UnifiedPerfData::INSTRUCTIONS) {
-    std::cerr << "错误：文件数据类型不是 INSTRUCTIONS" << std::endl;
-    return;
-  }
-
-  // 检查是否有 instructions payload
-  if (!perf_data.has_instructions()) {
-    std::cerr << "错误：UnifiedPerfData 中没有 instructions 数据" << std::endl;
-    return;
-  }
-
-  auto &system_track = perfetto_wrapper_.getSystemTrack();
-  auto &device_name = perf_data.device_name();
-  auto &batch_instruction = perf_data.instructions();
-
-  // 为设备创建一个轨道
-  auto device_track = perfetto_wrapper_.createNamedTrack(
-      "device_" + device_name, "Device: " + device_name, system_track, 0,
-      false);
-
-  // 处理该设备的所有 instructions
-  for (const auto &inst : batch_instruction.instructions()) {
-    processInstruction(inst, *device_track);
-  }
-  processPipMode(batch_instruction, *device_track);
-}
-
-void PerfShower::traceFunctions(const std::string &file_name) {
-  if (!initialized_) {
-    std::cerr << "错误：请先调用 init() 初始化" << std::endl;
-    return;
-  }
-
-  UnifiedPerfData perf_data;
-  std::ifstream input(file_name, std::ios::in | std::ios::binary);
-
-  if (!input.is_open()) {
-    std::cerr << "错误：无法打开文件 " << file_name << std::endl;
-    return;
-  }
-
-  if (!perf_data.ParseFromIstream(&input)) {
-    std::cerr << "错误：解析文件失败 " << file_name << std::endl;
-    return;
-  }
-
-  // 检查数据类型
-  if (perf_data.data_type() != UnifiedPerfData::FUNCTIONS) {
-    std::cerr << "错误：文件数据类型不是 FUNCTIONS" << std::endl;
-    return;
-  }
-
-  // 检查是否有 functions payload
-  if (!perf_data.has_functions()) {
-    std::cerr << "错误：UnifiedPerfData 中没有 functions 数据" << std::endl;
-    return;
-  }
-
-  auto &system_track = perfetto_wrapper_.getSystemTrack();
-  auto &device_name = perf_data.device_name();
-  auto &batch_function = perf_data.functions();
-
-  std::map<std::string, std::vector<const unified_perf_format::Function *>>
-      function_stack_map;
-  std::map<std::string, std::shared_ptr<perfetto::NamedTrack>>
-      function_track_map;
-
-  for (auto &func : batch_function.functions()) {
-    auto function_track_name =
-        device_name + "_function_t" + std::to_string(func.thread_id());
-    if (function_track_map.find(function_track_name) ==
-        function_track_map.end()) {
-      function_track_map[function_track_name] =
-          perfetto_wrapper_.createNamedTrack(function_track_name,
-                                             function_track_name, system_track,
-                                             func.thread_id());
-    }
-    auto function_track = function_track_map.at(function_track_name);
-    if (func.inst_type() == unified_perf_format::InstType::CALL) {
-      function_stack_map[function_track_name].push_back(&func);
-    } else if (func.inst_type() == unified_perf_format::InstType::RET) {
-      perfetto_wrapper_.addTraceEvent(
-          func.name(), *function_track,
-          function_stack_map[function_track_name].back()->timestamp(),
-          func.timestamp(), func.metadata(), MetadataMap());
-      function_stack_map[function_track_name].pop_back();
-    } else if (func.inst_type() == unified_perf_format::InstType::POINT_SHOW) {
-      perfetto_wrapper_.addTraceEvent(func.name(), *function_track,
-                                      func.timestamp(), func.timestamp(),
-                                      func.metadata(), MetadataMap());
-    }
-  }
-}
-
-void PerfShower::traceCounters(const std::string &file_name) {
-  if (!initialized_) {
-    std::cerr << "错误：请先调用 init() 初始化" << std::endl;
-    return;
-  }
-
-  UnifiedPerfData perf_data;
-  std::ifstream input(file_name, std::ios::in | std::ios::binary);
-
-  if (!input.is_open()) {
-    std::cerr << "错误：无法打开文件 " << file_name << std::endl;
-    return;
-  }
-
-  if (!perf_data.ParseFromIstream(&input)) {
-    std::cerr << "错误：解析文件失败 " << file_name << std::endl;
-    return;
-  }
-
-  // 检查数据类型
-  if (perf_data.data_type() != UnifiedPerfData::COUNTERS) {
-    std::cerr << "错误：文件数据类型不是 COUNTERS" << std::endl;
-    return;
-  }
-
-  // 检查是否有 counters payload
-  if (!perf_data.has_counters()) {
-    std::cerr << "错误：UnifiedPerfData 中没有 counters 数据" << std::endl;
-    return;
-  }
-
-  auto &system_track = perfetto_wrapper_.getSystemTrack();
-  auto &device_name = perf_data.device_name();
-  auto &batch_counter = perf_data.counters();
-
-  // 为设备创建一个轨道
-  auto device_track = perfetto_wrapper_.createNamedTrack(
-      "device_" + device_name, "Device: " + device_name, system_track, 0,
-      false);
-
-  // 处理该设备的所有 counters
-  for (const auto &cnt : batch_counter.counters()) {
-    auto track = perfetto_wrapper_.createCounterTrack(
-        "counter_" + cnt.name(), cnt.unit(), system_track);
-
-    uint64_t last_timestamp = 0;
-    for (auto &value : cnt.values()) {
-      perfetto_wrapper_.addCounterEvent(*track, value.timestamp(),
-                                        value.value());
-      last_timestamp = value.timestamp();
-    }
-  }
-}
-
 void PerfShower::processInstruction(
     const unified_perf_format::Instruction &inst,
     perfetto::Track &parent_track) {
@@ -220,16 +65,6 @@ void PerfShower::processInstruction(
                                     stage.end_time(), inst.metadata(),
                                     stage.metadata());
   }
-}
-
-
-void PerfShower::showCounter(const std::string &perf_path , ) {
-  if (!initialized_) {
-    std::cerr << "错误：请先调用 init() 初始化" << std::endl;
-    return;
-  }
-  
-  
 }
 
 // 辅助函数：检查两个 stage 是否时间重叠
@@ -337,5 +172,428 @@ void PerfShower::processPipMode(
       }
     }
     track_stage_queue_vec.clear();
+  }
+}
+
+void PerfShower::processLineMode(
+    const unified_perf_format::BatchInstruction &batch_instruction,
+    perfetto::Track &parent_track) {
+  // Line 模式：按照 instruction 的顺序线性显示
+  int track_rank_id = 0;
+  for (const auto &inst : batch_instruction.instructions()) {
+    std::string track_name = "inst_" + std::to_string(inst.thread_id()) + "_" +
+                             std::to_string(inst.global_seq_num());
+    auto track = perfetto_wrapper_.createNamedTrack(
+        track_name, inst.name(), parent_track, track_rank_id++, true);
+    
+    // 按照 stage 的顺序线性添加
+    for (const auto &stage : inst.stages()) {
+      perfetto_wrapper_.addTraceEvent(stage.name(), *track, stage.start_time(),
+                                      stage.end_time(), inst.metadata(),
+                                      stage.metadata());
+    }
+  }
+}
+
+void PerfShower::processFuncMode(
+    const unified_perf_format::BatchFunction &batch_function,
+    perfetto::Track &parent_track) {
+  std::map<std::string, std::vector<const unified_perf_format::Function *>>
+      function_stack_map;
+  std::map<std::string, std::shared_ptr<perfetto::NamedTrack>>
+      function_track_map;
+
+  for (const auto &func : batch_function.functions()) {
+    auto function_track_name =
+        "function_t" + std::to_string(func.thread_id());
+    if (function_track_map.find(function_track_name) ==
+        function_track_map.end()) {
+      function_track_map[function_track_name] =
+          perfetto_wrapper_.createNamedTrack(function_track_name,
+                                             function_track_name, parent_track,
+                                             func.thread_id());
+    }
+    auto function_track = function_track_map.at(function_track_name);
+    if (func.inst_type() == unified_perf_format::InstType::CALL) {
+      function_stack_map[function_track_name].push_back(&func);
+    } else if (func.inst_type() == unified_perf_format::InstType::RET) {
+      if (!function_stack_map[function_track_name].empty()) {
+        perfetto_wrapper_.addTraceEvent(
+            func.name(), *function_track,
+            function_stack_map[function_track_name].back()->timestamp(),
+            func.timestamp(), func.metadata(), MetadataMap());
+        function_stack_map[function_track_name].pop_back();
+      }
+    } else if (func.inst_type() == unified_perf_format::InstType::POINT_SHOW) {
+      perfetto_wrapper_.addTraceEvent(func.name(), *function_track,
+                                      func.timestamp(), func.timestamp(),
+                                      func.metadata(), MetadataMap());
+    }
+  }
+}
+
+void PerfShower::processCntMode(
+    const unified_perf_format::BatchCounter &batch_counter,
+    perfetto::Track &parent_track) {
+  for (const auto &cnt : batch_counter.counters()) {
+    auto track = perfetto_wrapper_.createCounterTrack(
+        "counter_" + cnt.name(), cnt.unit(), parent_track);
+
+    for (const auto &value : cnt.values()) {
+      perfetto_wrapper_.addCounterEvent(*track, value.timestamp(),
+                                        value.value());
+    }
+  }
+}
+
+std::map<std::string, ViewConfig> PerfShower::parseShowJson(const std::string &json_path) {
+  std::map<std::string, ViewConfig> views;
+  
+  std::ifstream file(json_path);
+  if (!file.is_open()) {
+    std::cerr << "错误：无法打开 JSON 文件 " << json_path << std::endl;
+    return views;
+  }
+
+  json j;
+  try {
+    file >> j;
+  } catch (const json::parse_error &e) {
+    std::cerr << "错误：JSON 解析失败: " << e.what() << std::endl;
+    return views;
+  }
+
+  for (auto it = j.begin(); it != j.end(); ++it) {
+    const std::string &view_name = it.key();
+    const json &view_obj = it.value();
+    
+    ViewConfig config;
+    if (view_obj.contains("mode")) {
+      config.mode = view_obj["mode"].get<std::string>();
+    }
+    
+    // 解析过滤器数组：如果 JSON 中没有指定某个 filter 字段，则 filters 保持为空
+    // 空的 filters 表示不进行筛选（所有数据都通过）
+    auto parseFilterArray = [&view_obj](const std::string &key, std::vector<FilterRule> &filters) {
+      if (view_obj.contains(key) && view_obj[key].is_array()) {
+        for (const auto &rule : view_obj[key]) {
+          if (rule.is_string()) {
+            filters.push_back(FilterRule(rule.get<std::string>()));
+          }
+        }
+      }
+      // 如果 JSON 中没有这个字段，filters 保持为空，表示不过滤
+    };
+
+    parseFilterArray("timeline_filter", config.timeline_filter);
+    parseFilterArray("event_filter", config.event_filter);
+    parseFilterArray("track_filter", config.track_filter);
+    parseFilterArray("device_filter", config.device_filter);
+    parseFilterArray("thread_filter", config.thread_filter);
+
+    views[view_name] = config;
+  }
+
+  return views;
+}
+
+bool PerfShower::passTimelineFilter(const std::vector<FilterRule> &filters, 
+                                    uint64_t start_time, uint64_t end_time) {
+  // 如果过滤器为空（JSON 中未指定），则通过所有数据
+  if (filters.empty()) return true;
+  
+  for (const auto &rule : filters) {
+    // 解析时间范围，格式: "start-end" 或单个时间戳
+    std::string value = rule.value;
+    size_t dash_pos = value.find('-');
+    if (dash_pos != std::string::npos) {
+      uint64_t filter_start = std::stoull(value.substr(0, dash_pos));
+      uint64_t filter_end = std::stoull(value.substr(dash_pos + 1));
+      // 检查时间范围是否有重叠：只要 stage 的时间范围与 filter 的时间范围有任何重叠，
+      // 就返回 true（整个 stage 都会被绘制，而不仅仅是重叠的部分）
+      // 重叠条件：stage.start <= filter.end && stage.end >= filter.start
+      if (start_time <= filter_end && end_time >= filter_start) {
+        return true;
+      }
+    } else {
+      // 单个时间戳，检查该时间戳是否在 stage 的时间范围内
+      uint64_t timestamp = std::stoull(value);
+      if (timestamp >= start_time && timestamp <= end_time) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+bool PerfShower::passEventFilter(const std::vector<FilterRule> &filters, 
+                                 const std::string &event_name) {
+  // 如果过滤器为空（JSON 中未指定），则通过所有数据
+  if (filters.empty()) return true;
+  
+  for (const auto &rule : filters) {
+    if (event_name.find(rule.value) != std::string::npos) {
+      return true;
+    }
+  }
+  return false;
+}
+
+bool PerfShower::passTrackFilter(const std::vector<FilterRule> &filters, 
+                                 const std::string &track_name) {
+  // 如果过滤器为空（JSON 中未指定），则通过所有数据
+  if (filters.empty()) return true;
+  
+  for (const auto &rule : filters) {
+    if (track_name.find(rule.value) != std::string::npos) {
+      return true;
+    }
+  }
+  return false;
+}
+
+bool PerfShower::passDeviceFilter(const std::vector<FilterRule> &filters, 
+                                  const std::string &device_name) {
+  // 如果过滤器为空（JSON 中未指定），则通过所有数据
+  if (filters.empty()) return true;
+  
+  for (const auto &rule : filters) {
+    if (device_name.find(rule.value) != std::string::npos) {
+      return true;
+    }
+  }
+  return false;
+}
+
+bool PerfShower::passThreadFilter(const std::vector<FilterRule> &filters, 
+                                  uint32_t thread_id) {
+  // 如果过滤器为空（JSON 中未指定），则通过所有数据
+  if (filters.empty()) return true;
+  
+  for (const auto &rule : filters) {
+    uint32_t filter_thread = std::stoul(rule.value);
+    if (thread_id == filter_thread) {
+      return true;
+    }
+  }
+  return false;
+}
+
+std::vector<UnifiedPerfData> PerfShower::readPerfDataFromFile(const std::string &bin_file_path) {
+  std::vector<UnifiedPerfData> perf_data_list;
+  
+  std::ifstream file_stream(bin_file_path, std::ios::in | std::ios::binary);
+  if (!file_stream.is_open()) {
+    std::cerr << "错误：无法打开文件 " << bin_file_path << std::endl;
+    return perf_data_list;
+  }
+
+  // 先尝试读取容器消息格式（推荐方式）
+  unified_perf_format::UnifiedPerfDataContainer container;
+  if (container.ParseFromIstream(&file_stream)) {
+    // 成功读取容器消息，提取所有数据
+    for (int i = 0; i < container.data_list_size(); i++) {
+      perf_data_list.push_back(container.data_list(i));
+    }
+    std::cout << "使用容器消息格式读取，共 " << perf_data_list.size() << " 个数据块" << std::endl;
+    return perf_data_list;
+  }
+  
+  // 如果容器消息格式失败，尝试单个 UnifiedPerfData 格式（向后兼容）
+  file_stream.clear();
+  file_stream.seekg(0, std::ios::beg);
+  UnifiedPerfData perf_data;
+  if (perf_data.ParseFromIstream(&file_stream)) {
+    perf_data_list.push_back(perf_data);
+    std::cout << "使用单个消息格式读取" << std::endl;
+    return perf_data_list;
+  }
+  
+  std::cerr << "错误：无法解析文件 " << bin_file_path 
+            << "（既不是容器消息格式，也不是单个消息格式）" << std::endl;
+  return perf_data_list;
+}
+
+void PerfShower::processDataWithView(const ViewConfig &view_config, 
+                                     const std::vector<UnifiedPerfData> &perf_data_list,
+                                     perfetto::Track &view_track) {
+  // 注意：此方法不会修改 perf_data_list 中的原始数据
+  // 所有过滤操作都在新创建的对象上进行（filtered_batch, filtered_inst 等）
+  // 使用 CopyFrom() 复制数据，确保原始数据保持不变
+  
+  // 处理每个消息
+  for (const auto &perf_data : perf_data_list) {
+    // 检查设备过滤器
+    if (!passDeviceFilter(view_config.device_filter, perf_data.device_name())) {
+      continue;
+    }
+
+    // 为每个设备创建一个子 track（在 view_track 下）
+    auto device_track = perfetto_wrapper_.createNamedTrack(
+        "device_" + perf_data.device_name(), "Device: " + perf_data.device_name(), 
+        view_track, 0, false);
+
+  // 根据 mode 处理数据
+  if (view_config.mode == "pipe" && perf_data.has_instructions()) {
+    // 应用过滤器处理 instructions
+    auto &batch_instruction = perf_data.instructions();
+    unified_perf_format::BatchInstruction filtered_batch;
+    
+    for (const auto &inst : batch_instruction.instructions()) {
+      if (!passThreadFilter(view_config.thread_filter, inst.thread_id())) {
+        continue;
+      }
+      
+      bool has_valid_stage = false;
+      unified_perf_format::Instruction filtered_inst;
+      filtered_inst.CopyFrom(inst);
+      filtered_inst.clear_stages();
+      
+      for (const auto &stage : inst.stages()) {
+        if (passTimelineFilter(view_config.timeline_filter, 
+                               stage.start_time(), stage.end_time()) &&
+            passEventFilter(view_config.event_filter, stage.name())) {
+          auto *new_stage = filtered_inst.add_stages();
+          new_stage->CopyFrom(stage);
+          has_valid_stage = true;
+        }
+      }
+      
+      if (has_valid_stage) {
+        auto *new_inst = filtered_batch.add_instructions();
+        new_inst->CopyFrom(filtered_inst);
+      }
+    }
+    
+    if (filtered_batch.instructions_size() > 0) {
+      processPipMode(filtered_batch, *device_track);
+    }
+    
+  } else if (view_config.mode == "line" && perf_data.has_instructions()) {
+    auto &batch_instruction = perf_data.instructions();
+    unified_perf_format::BatchInstruction filtered_batch;
+    
+    for (const auto &inst : batch_instruction.instructions()) {
+      if (!passThreadFilter(view_config.thread_filter, inst.thread_id())) {
+        continue;
+      }
+      
+      bool has_valid_stage = false;
+      unified_perf_format::Instruction filtered_inst;
+      filtered_inst.CopyFrom(inst);
+      filtered_inst.clear_stages();
+      
+      for (const auto &stage : inst.stages()) {
+        if (passTimelineFilter(view_config.timeline_filter, 
+                               stage.start_time(), stage.end_time()) &&
+            passEventFilter(view_config.event_filter, stage.name())) {
+          auto *new_stage = filtered_inst.add_stages();
+          new_stage->CopyFrom(stage);
+          has_valid_stage = true;
+        }
+      }
+      
+      if (has_valid_stage) {
+        auto *new_inst = filtered_batch.add_instructions();
+        new_inst->CopyFrom(filtered_inst);
+      }
+    }
+    
+    if (filtered_batch.instructions_size() > 0) {
+      processLineMode(filtered_batch, *device_track);
+    }
+    
+  } else if (view_config.mode == "func" && perf_data.has_functions()) {
+    auto &batch_function = perf_data.functions();
+    unified_perf_format::BatchFunction filtered_batch;
+    
+    for (const auto &func : batch_function.functions()) {
+      if (!passThreadFilter(view_config.thread_filter, func.thread_id())) {
+        continue;
+      }
+      
+      if (passTimelineFilter(view_config.timeline_filter, 
+                             func.timestamp(), func.timestamp()) &&
+          passEventFilter(view_config.event_filter, func.name())) {
+        auto *new_func = filtered_batch.add_functions();
+        new_func->CopyFrom(func);
+      }
+    }
+    
+    if (filtered_batch.functions_size() > 0) {
+      processFuncMode(filtered_batch, *device_track);
+    }
+    
+  } else if (view_config.mode == "cnt" && perf_data.has_counters()) {
+    auto &batch_counter = perf_data.counters();
+    unified_perf_format::BatchCounter filtered_batch;
+    
+    for (const auto &cnt : batch_counter.counters()) {
+      if (!passTrackFilter(view_config.track_filter, cnt.name())) {
+        continue;
+      }
+      
+      unified_perf_format::Counter filtered_cnt;
+      filtered_cnt.CopyFrom(cnt);
+      filtered_cnt.clear_values();
+      
+      for (const auto &value : cnt.values()) {
+        if (passTimelineFilter(view_config.timeline_filter, 
+                               value.timestamp(), value.timestamp())) {
+          auto *new_value = filtered_cnt.add_values();
+          new_value->CopyFrom(value);
+        }
+      }
+      
+      if (filtered_cnt.values_size() > 0) {
+        auto *new_cnt = filtered_batch.add_counters();
+        new_cnt->CopyFrom(filtered_cnt);
+      }
+    }
+    
+    if (filtered_batch.counters_size() > 0) {
+      processCntMode(filtered_batch, *device_track);
+    }
+  }
+  }
+}
+
+void PerfShower::show(const std::string &show_json_path, const std::string &bin_file_path) {
+  if (!initialized_) {
+    std::cerr << "错误：请先调用 init() 初始化" << std::endl;
+    return;
+  }
+
+  auto views = parseShowJson(show_json_path);
+  if (views.empty()) {
+    std::cerr << "错误：没有找到有效的视图配置" << std::endl;
+    return;
+  }
+
+  // 只读取一次 bin 文件，避免多次读取
+  std::cout << "读取性能数据文件: " << bin_file_path << std::endl;
+  auto perf_data_list = readPerfDataFromFile(bin_file_path);
+  if (perf_data_list.empty()) {
+    std::cerr << "错误：未能从文件读取到任何数据" << std::endl;
+    return;
+  }
+  std::cout << "成功读取 " << perf_data_list.size() << " 个数据块" << std::endl;
+
+  auto &system_track = perfetto_wrapper_.getSystemTrack();
+  int view_rank = 0;
+
+  // 处理每个视图，为每个 view 创建一个独立的 track
+  for (auto it = views.begin(); it != views.end(); ++it) {
+    const std::string &view_name = it->first;
+    const ViewConfig &view_config = it->second;
+    
+    std::cout << "处理视图: " << view_name << ", 模式: " << view_config.mode << std::endl;
+    
+    // 为每个 view 创建一个 track，view_name 作为 track 名称
+    auto view_track = perfetto_wrapper_.createNamedTrack(
+        "view_" + view_name, view_name, system_track, view_rank++, false);
+    
+    // 在该 view 的 track 下处理数据（使用已读取的数据）
+    processDataWithView(view_config, perf_data_list, *view_track);
   }
 }

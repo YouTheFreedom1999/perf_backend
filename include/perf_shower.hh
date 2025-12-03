@@ -4,6 +4,28 @@
 #include "perfetto_wrapper.hh"
 #include "unified_perf_format.pb.h"
 #include <string>
+#include <vector>
+#include <map>
+
+/**
+ * 过滤器规则：支持字符串匹配
+ */
+struct FilterRule {
+  std::string value;
+  FilterRule(const std::string &v) : value(v) {}
+};
+
+/**
+ * 视图配置：对应 show.json 中的一个 view
+ */
+struct ViewConfig {
+  std::string mode;  // "pipe", "line", "func", "cnt"
+  std::vector<FilterRule> timeline_filter;  // 时间范围过滤，格式: "start-end"
+  std::vector<FilterRule> event_filter;     // 事件名称过滤
+  std::vector<FilterRule> track_filter;     // 轨道名称过滤
+  std::vector<FilterRule> device_filter;    // 设备名称过滤
+  std::vector<FilterRule> thread_filter;    // 线程ID过滤
+};
 
 /**
  * PerfShower 类：将统一性能格式数据转换为 Perfetto 追踪格式
@@ -26,22 +48,11 @@ public:
   void finish(const std::string &output_path);
 
   /**
-   * 从文件加载并追踪 Instructions 数据
-   * @param file_name 输入文件路径
+   * 根据 show.json 配置和 bin 文件显示性能数据
+   * @param show_json_path show.json 配置文件路径
+   * @param bin_file_path 包含性能数据的 bin 文件路径
    */
-  void traceInstructions(const std::string &file_name);
-
-  /**
-   * 从文件加载并追踪 Functions 数据
-   * @param file_name 输入文件路径
-   */
-  void traceFunctions(const std::string &file_name);
-
-  /**
-   * 从文件加载并追踪 Counters 数据
-   * @param file_name 输入文件路径
-   */
-  void traceCounters(const std::string &file_name);
+  void show(const std::string &show_json_path, const std::string &bin_file_path);
   
 private:
   /**
@@ -51,8 +62,79 @@ private:
    */
   void processInstruction(const unified_perf_format::Instruction &inst,
                           perfetto::Track &parent_track);
+  
+  /**
+   * 处理 Pipe 模式
+   */
   void processPipMode(const unified_perf_format::BatchInstruction &batch_instruction,
                       perfetto::Track &parent_track);
+
+  /**
+   * 处理 Line 模式（线性模式）
+   */
+  void processLineMode(const unified_perf_format::BatchInstruction &batch_instruction,
+                       perfetto::Track &parent_track);
+
+  /**
+   * 处理 Func 模式
+   */
+  void processFuncMode(const unified_perf_format::BatchFunction &batch_function,
+                       perfetto::Track &parent_track);
+
+  /**
+   * 处理 Cnt 模式
+   */
+  void processCntMode(const unified_perf_format::BatchCounter &batch_counter,
+                      perfetto::Track &parent_track);
+
+  /**
+   * 解析 show.json 文件
+   * @param json_path JSON 文件路径
+   * @return 视图配置映射
+   */
+  std::map<std::string, ViewConfig> parseShowJson(const std::string &json_path);
+
+  /**
+   * 检查是否通过时间线过滤器
+   */
+  bool passTimelineFilter(const std::vector<FilterRule> &filters, uint64_t start_time, uint64_t end_time);
+
+  /**
+   * 检查是否通过事件过滤器
+   */
+  bool passEventFilter(const std::vector<FilterRule> &filters, const std::string &event_name);
+
+  /**
+   * 检查是否通过轨道过滤器
+   */
+  bool passTrackFilter(const std::vector<FilterRule> &filters, const std::string &track_name);
+
+  /**
+   * 检查是否通过设备过滤器
+   */
+  bool passDeviceFilter(const std::vector<FilterRule> &filters, const std::string &device_name);
+
+  /**
+   * 检查是否通过线程过滤器
+   */
+  bool passThreadFilter(const std::vector<FilterRule> &filters, uint32_t thread_id);
+
+  /**
+   * 根据视图配置处理数据
+   * @param view_config 视图配置
+   * @param perf_data_list 已经读取的性能数据列表
+   * @param view_track 该视图对应的 track（父轨道）
+   */
+  void processDataWithView(const ViewConfig &view_config, 
+                           const std::vector<unified_perf_format::UnifiedPerfData> &perf_data_list,
+                           perfetto::Track &view_track);
+  
+  /**
+   * 从文件读取性能数据（支持单个或多个消息格式）
+   * @param bin_file_path 数据文件路径
+   * @return 读取到的性能数据列表
+   */
+  std::vector<unified_perf_format::UnifiedPerfData> readPerfDataFromFile(const std::string &bin_file_path);
 
   PerfettoWrapper perfetto_wrapper_;
   bool initialized_;
