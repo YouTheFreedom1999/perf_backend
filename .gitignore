@@ -5,3 +5,5 @@ data
 *.data
 *.bin
 .cache
+*.pyc
+package
