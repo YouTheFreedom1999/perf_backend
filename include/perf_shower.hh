@@ -28,6 +28,15 @@ struct ViewConfig {
 };
 
 /**
+ * JSON 配置解析结果：包含视图配置和文件列表
+ */
+struct JsonConfig {
+  std::map<std::string, ViewConfig> views;  // 视图配置映射
+  std::vector<std::string> filelist;        // 输入文件列表
+  std::string output;                       // 输出文件路径
+};
+
+/**
  * PerfShower 类：将统一性能格式数据转换为 Perfetto 追踪格式
  */
 class PerfShower {
@@ -39,27 +48,21 @@ public:
    * 初始化 Perfetto 追踪系统
    * @param buf_size_kb 缓冲区大小（KB），默认 4096KB
    */
-  void init(int buf_size_kb = 4096);
+  void init(int buf_size_kb = 409600);
 
   /**
    * 结束追踪并保存到文件
    * @param output_path 输出文件路径
    */
   void finish(const std::string &output_path);
-
-  /**
-   * 根据 show.json 配置和 bin 文件显示性能数据
-   * @param show_json_path show.json 配置文件路径
-   * @param bin_file_path 包含性能数据的 bin 文件路径
-   */
-  void show(const std::string &show_json_path, const std::string &bin_file_path);
   
   /**
    * 根据 show.json 配置和多个 bin 文件显示性能数据
    * @param show_json_path show.json 配置文件路径
-   * @param bin_file_paths 包含性能数据的 bin 文件路径列表
+   * @param bin_file_paths 包含性能数据的 bin 文件路径列表（已废弃，从 JSON 中读取）
+   * @return 输出文件路径（从 JSON 配置中读取）
    */
-  void show(const std::string &show_json_path, const std::vector<std::string> &bin_file_paths);
+  std::string show(const std::string &show_json_path);
   
 private:
   /**
@@ -97,9 +100,9 @@ private:
   /**
    * 解析 show.json 文件
    * @param json_path JSON 文件路径
-   * @return 视图配置映射
+   * @return JSON 配置解析结果（包含视图配置和文件列表）
    */
-  std::map<std::string, ViewConfig> parseShowJson(const std::string &json_path);
+  JsonConfig parseShowJson(const std::string &json_path);
 
   /**
    * 检查是否通过时间线过滤器

@@ -246,13 +246,13 @@ void PerfShower::processCntMode(
   }
 }
 
-std::map<std::string, ViewConfig> PerfShower::parseShowJson(const std::string &json_path) {
-  std::map<std::string, ViewConfig> views;
+JsonConfig PerfShower::parseShowJson(const std::string &json_path) {
+  JsonConfig config;
   
   std::ifstream file(json_path);
   if (!file.is_open()) {
     std::cerr << "错误：无法打开 JSON 文件 " << json_path << std::endl;
-    return views;
+    return config;
   }
 
   json j;
@@ -260,16 +260,43 @@ std::map<std::string, ViewConfig> PerfShower::parseShowJson(const std::string &j
     file >> j;
   } catch (const json::parse_error &e) {
     std::cerr << "错误：JSON 解析失败: " << e.what() << std::endl;
-    return views;
+    return config;
   }
 
+  // 解析 filelist 字段（如果存在）
+  if (j.contains("filelist") && j["filelist"].is_array()) {
+    for (const auto &file_path : j["filelist"]) {
+      if (file_path.is_string()) {
+        config.filelist.push_back(file_path.get<std::string>());
+      }
+    }
+    std::cout << "从 JSON 配置中读取到 " << config.filelist.size() << " 个输入文件" << std::endl;
+  }
+
+  // 解析 output 字段（如果存在）
+  if (j.contains("output") && j["output"].is_string()) {
+    config.output = j["output"].get<std::string>();
+    std::cout << "从 JSON 配置中读取到输出文件路径: " << config.output << std::endl;
+  }
+
+  // 解析视图配置
   for (auto it = j.begin(); it != j.end(); ++it) {
     const std::string &view_name = it.key();
+    // 跳过 "filelist" 和 "output" 字段，它们不是视图配置
+    if (view_name == "filelist" || view_name == "output") {
+      continue;
+    }
+    
     const json &view_obj = it.value();
     
-    ViewConfig config;
+    // 只处理对象类型的视图配置
+    if (!view_obj.is_object()) {
+      continue;
+    }
+    
+    ViewConfig view_config;
     if (view_obj.contains("mode")) {
-      config.mode = view_obj["mode"].get<std::string>();
+      view_config.mode = view_obj["mode"].get<std::string>();
     }
     
     // 解析过滤器数组：如果 JSON 中没有指定某个 filter 字段，则 filters 保持为空
@@ -285,16 +312,16 @@ std::map<std::string, ViewConfig> PerfShower::parseShowJson(const std::string &j
       // 如果 JSON 中没有这个字段，filters 保持为空，表示不过滤
     };
 
-    parseFilterArray("timeline_filter", config.timeline_filter);
-    parseFilterArray("event_filter", config.event_filter);
-    parseFilterArray("track_filter", config.track_filter);
-    parseFilterArray("device_filter", config.device_filter);
-    parseFilterArray("thread_filter", config.thread_filter);
+    parseFilterArray("timeline_filter", view_config.timeline_filter);
+    parseFilterArray("event_filter", view_config.event_filter);
+    parseFilterArray("track_filter", view_config.track_filter);
+    parseFilterArray("device_filter", view_config.device_filter);
+    parseFilterArray("thread_filter", view_config.thread_filter);
 
-    views[view_name] = config;
+    config.views[view_name] = view_config;
   }
 
-  return views;
+  return config;
 }
 
 bool PerfShower::passTimelineFilter(const std::vector<FilterRule> &filters, 
@@ -443,29 +470,54 @@ void PerfShower::processDataWithView(const ViewConfig &view_config,
   // 所有过滤操作都在新创建的对象上进行（filtered_batch, filtered_inst 等）
   // 使用 CopyFrom() 复制数据，确保原始数据保持不变
   
+  std::cout << "processDataWithView: 处理 " << perf_data_list.size() << " 个数据块，模式: " << view_config.mode << std::endl;
+  
+  // 缓存已创建的 device track，避免重复创建
+  std::map<std::string, std::shared_ptr<perfetto::NamedTrack>> device_track_map;
+  
   // 处理每个消息
   for (const auto &perf_data : perf_data_list) {
+    std::cout << "  处理数据块: device_name=" << perf_data.device_name() 
+              << ", data_type=" << perf_data.data_type() 
+              << ", has_instructions=" << perf_data.has_instructions()
+              << ", has_functions=" << perf_data.has_functions()
+              << ", has_counters=" << perf_data.has_counters() << std::endl;
+    
     // 检查设备过滤器
     if (!passDeviceFilter(view_config.device_filter, perf_data.device_name())) {
+      std::cout << "    设备过滤器未通过，跳过" << std::endl;
       continue;
     }
 
-    // 为每个设备创建一个子 track（在 view_track 下）
-    auto device_track = perfetto_wrapper_.createNamedTrack(
-        "device_" + perf_data.device_name(), "Device: " + perf_data.device_name(), 
-        view_track, 0, false);
+    // 检查是否已经为该设备创建了 track，如果没有则创建
+    std::shared_ptr<perfetto::NamedTrack> device_track;
+    const std::string &device_name = perf_data.device_name();
+    auto it = device_track_map.find(device_name);
+    if (it != device_track_map.end()) {
+      // 复用已创建的 track
+      device_track = it->second;
+      std::cout << "    复用已存在的 device track: " << device_name << std::endl;
+    } else {
+      // 创建新的 device track
+      device_track = perfetto_wrapper_.createNamedTrack(
+          "device_" + device_name, "Device: " + device_name, 
+          view_track, 0, false);
+      device_track_map[device_name] = device_track;
+      std::cout << "    创建新的 device track: " << device_name << std::endl;
+    }
 
   // 根据 mode 处理数据
   if (view_config.mode == "pipe" && perf_data.has_instructions()) {
     // 应用过滤器处理 instructions
     auto &batch_instruction = perf_data.instructions();
+    std::cout << "    处理 pipe 模式，共有 " << batch_instruction.instructions_size() << " 个指令" << std::endl;
     unified_perf_format::BatchInstruction filtered_batch;
     
     for (const auto &inst : batch_instruction.instructions()) {
       if (!passThreadFilter(view_config.thread_filter, inst.thread_id())) {
         continue;
       }
-      
+
       bool has_valid_stage = false;
       unified_perf_format::Instruction filtered_inst;
       filtered_inst.CopyFrom(inst);
@@ -487,11 +539,16 @@ void PerfShower::processDataWithView(const ViewConfig &view_config,
       }
     }
     
+    std::cout << "    过滤后剩余 " << filtered_batch.instructions_size() << " 个有效指令" << std::endl;
     if (filtered_batch.instructions_size() > 0) {
       processPipMode(filtered_batch, *device_track);
+      std::cout << "    已调用 processPipMode" << std::endl;
+    } else {
+      std::cout << "    警告：没有有效指令，跳过 processPipMode" << std::endl;
     }
     
   } else if (view_config.mode == "line" && perf_data.has_instructions()) {
+    std::cout << "    处理 line 模式，共有 " << perf_data.instructions().instructions_size() << " 个指令" << std::endl;
     auto &batch_instruction = perf_data.instructions();
     unified_perf_format::BatchInstruction filtered_batch;
     
@@ -526,6 +583,7 @@ void PerfShower::processDataWithView(const ViewConfig &view_config,
     }
     
   } else if (view_config.mode == "func" && perf_data.has_functions()) {
+    std::cout << "    处理 func 模式，共有 " << perf_data.functions().functions_size() << " 个函数" << std::endl;
     auto &batch_function = perf_data.functions();
     unified_perf_format::BatchFunction filtered_batch;
     
@@ -547,6 +605,7 @@ void PerfShower::processDataWithView(const ViewConfig &view_config,
     }
     
   } else if (view_config.mode == "cnt" && perf_data.has_counters()) {
+    std::cout << "    处理 cnt 模式，共有 " << perf_data.counters().counters_size() << " 个计数器" << std::endl;
     auto &batch_counter = perf_data.counters();
     unified_perf_format::BatchCounter filtered_batch;
     
@@ -576,40 +635,69 @@ void PerfShower::processDataWithView(const ViewConfig &view_config,
     if (filtered_batch.counters_size() > 0) {
       processCntMode(filtered_batch, *device_track);
     }
+  } else {
+    // 模式不匹配或数据类型不匹配
+    std::cout << "    警告：模式 " << view_config.mode << " 与数据类型不匹配" << std::endl;
+    std::cout << "      mode=" << view_config.mode 
+              << ", has_instructions=" << perf_data.has_instructions()
+              << ", has_functions=" << perf_data.has_functions()
+              << ", has_counters=" << perf_data.has_counters() << std::endl;
   }
   }
 }
-
-void PerfShower::show(const std::string &show_json_path, const std::string &bin_file_path) {
-  // 调用多文件版本的 show 方法，传入单个文件
-  std::vector<std::string> bin_file_paths = {bin_file_path};
-  show(show_json_path, bin_file_paths);
-}
-
-void PerfShower::show(const std::string &show_json_path, const std::vector<std::string> &bin_file_paths) {
+std::string PerfShower::show(const std::string &show_json_path) {
+  std::string output_path;
+  
   if (!initialized_) {
     std::cerr << "错误：请先调用 init() 初始化" << std::endl;
-    return;
+    return output_path;
   }
 
-  auto views = parseShowJson(show_json_path);
-  if (views.empty()) {
+  auto json_config = parseShowJson(show_json_path);
+  if (json_config.views.empty()) {
     std::cerr << "错误：没有找到有效的视图配置" << std::endl;
-    return;
+    return output_path;
+  }
+
+  // 从 JSON 配置中读取 filelist
+  std::vector<std::string> final_file_paths;
+  if (!json_config.filelist.empty()) {
+    final_file_paths = json_config.filelist;
+    std::cout << "使用 JSON 配置中的 filelist，共 " << final_file_paths.size() << " 个文件" << std::endl;
+  } else {
+    std::cerr << "错误：JSON 配置文件中未指定 'filelist' 字段" << std::endl;
+    std::cerr << "请在 JSON 配置文件中添加 'filelist' 字段，例如：" << std::endl;
+    std::cerr << "  \"filelist\": [\"file1.bin\", \"file2.bin\"]" << std::endl;
+    return output_path;
+  }
+
+  if (final_file_paths.empty()) {
+    std::cerr << "错误：JSON 配置中的 'filelist' 字段为空" << std::endl;
+    return output_path;
+  }
+
+  // 从 JSON 配置中读取 output 路径
+  if (!json_config.output.empty()) {
+    output_path = json_config.output;
+  } else {
+    std::cerr << "错误：JSON 配置文件中未指定 'output' 字段" << std::endl;
+    std::cerr << "请在 JSON 配置文件中添加 'output' 字段，例如：" << std::endl;
+    std::cerr << "  \"output\": \"data/test.perfetto\"" << std::endl;
+    return output_path;
   }
 
   // 从多个文件读取性能数据并合并
-  auto perf_data_list = readPerfDataFromFiles(bin_file_paths);
+  auto perf_data_list = readPerfDataFromFiles(final_file_paths);
   if (perf_data_list.empty()) {
     std::cerr << "错误：未能从文件读取到任何数据" << std::endl;
-    return;
+    return output_path;
   }
 
   auto &system_track = perfetto_wrapper_.getSystemTrack();
   int view_rank = 0;
 
   // 处理每个视图，为每个 view 创建一个独立的 track
-  for (auto it = views.begin(); it != views.end(); ++it) {
+  for (auto it = json_config.views.begin(); it != json_config.views.end(); ++it) {
     const std::string &view_name = it->first;
     const ViewConfig &view_config = it->second;
     
@@ -621,5 +709,9 @@ void PerfShower::show(const std::string &show_json_path, const std::vector<std::
     
     // 在该 view 的 track 下处理数据（使用已读取的数据）
     processDataWithView(view_config, perf_data_list, *view_track);
+    std::cout << "视图 " << view_name << " 处理完成" << std::endl;
   }
+
+  std::cout << "所有视图处理完成，准备返回输出路径: " << output_path << std::endl;
+  return output_path;
 }

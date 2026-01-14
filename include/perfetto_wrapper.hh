@@ -24,7 +24,7 @@ public:
      * 初始化 perfetto 追踪系统
      * @param buf_size_kb 缓冲区大小（KB）
      */
-    void start(int buf_size_kb = 4096);
+    void start(int buf_size_kb = 409600);
 
     /**
      * 结束追踪并保存到文件

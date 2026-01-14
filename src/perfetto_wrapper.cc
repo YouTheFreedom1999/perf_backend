@@ -24,7 +24,7 @@ void PerfettoWrapper::start(int buf_size_kb) {
   perfetto::TraceConfig cfg;
   auto buf_cfg = cfg.add_buffers();
   buf_cfg->set_size_kb(buf_size_kb);
-  // buf_cfg->set_fill_policy(perfetto::protos::gen::TraceConfig_BufferConfig::RING_BUFFER);
+  buf_cfg->set_fill_policy(perfetto::protos::gen::TraceConfig_BufferConfig::RING_BUFFER);
 
   auto *ds_cfg = cfg.add_data_sources()->mutable_config();
   ds_cfg->set_name("track_event");
@@ -47,6 +47,12 @@ void PerfettoWrapper::end(const std::string &perf_path) {
   perfetto::TrackEvent::Flush();
   std::vector<char> trace_data(tracing_session_->ReadTraceBlocking());
 
+  std::cout << "PerfettoWrapper::end: 读取到 " << trace_data.size() << " 字节的追踪数据" << std::endl;
+
+  if (trace_data.empty()) {
+    std::cerr << "警告：追踪数据为空，可能没有事件被记录" << std::endl;
+  }
+
   std::ofstream output(perf_path, std::ios::out | std::ios::binary);
   if (!output.is_open()) {
     std::cerr << "错误：无法打开文件 " << perf_path << std::endl;
@@ -56,7 +62,7 @@ void PerfettoWrapper::end(const std::string &perf_path) {
   output.write(&trace_data[0], std::streamsize(trace_data.size()));
   output.close();
 
-  printf("Trace文件已保存为: %s\n", perf_path.c_str());
+  printf("Trace文件已保存为: %s (大小: %zu 字节)\n", perf_path.c_str(), trace_data.size());
 }
 
 std::shared_ptr<perfetto::NamedTrack> PerfettoWrapper::createNamedTrack(
@@ -77,6 +83,7 @@ std::shared_ptr<perfetto::NamedTrack> PerfettoWrapper::createNamedTrack(
   desc.set_sibling_order_rank(rank_id);
 
   perfetto::TrackEvent::SetTrackDescriptor(*track, desc);
+  std::cout << "PerfettoWrapper::createNamedTrack: " << track_name << " " << track_show_name << " " << rank_id << std::endl;
   return track;
 }
 
