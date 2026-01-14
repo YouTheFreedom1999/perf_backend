@@ -54,6 +54,13 @@ public:
    */
   void show(const std::string &show_json_path, const std::string &bin_file_path);
   
+  /**
+   * 根据 show.json 配置和多个 bin 文件显示性能数据
+   * @param show_json_path show.json 配置文件路径
+   * @param bin_file_paths 包含性能数据的 bin 文件路径列表
+   */
+  void show(const std::string &show_json_path, const std::vector<std::string> &bin_file_paths);
+  
 private:
   /**
    * 处理单个 Instruction 并添加到追踪
@@ -135,6 +142,13 @@ private:
    * @return 读取到的性能数据列表
    */
   std::vector<unified_perf_format::UnifiedPerfData> readPerfDataFromFile(const std::string &bin_file_path);
+  
+  /**
+   * 从多个文件读取性能数据并合并
+   * @param bin_file_paths 数据文件路径列表
+   * @return 合并后的性能数据列表
+   */
+  std::vector<unified_perf_format::UnifiedPerfData> readPerfDataFromFiles(const std::vector<std::string> &bin_file_paths);
 
   PerfettoWrapper perfetto_wrapper_;
   bool initialized_;

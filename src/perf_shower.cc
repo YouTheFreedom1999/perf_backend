@@ -414,6 +414,28 @@ std::vector<UnifiedPerfData> PerfShower::readPerfDataFromFile(const std::string 
   return perf_data_list;
 }
 
+std::vector<UnifiedPerfData> PerfShower::readPerfDataFromFiles(const std::vector<std::string> &bin_file_paths) {
+  std::vector<UnifiedPerfData> merged_perf_data_list;
+  
+  for (const auto &bin_file_path : bin_file_paths) {
+    std::cout << "读取性能数据文件: " << bin_file_path << std::endl;
+    auto perf_data_list = readPerfDataFromFile(bin_file_path);
+    if (!perf_data_list.empty()) {
+      // 将读取到的数据合并到总列表中
+      merged_perf_data_list.insert(merged_perf_data_list.end(), 
+                                    perf_data_list.begin(), 
+                                    perf_data_list.end());
+      std::cout << "成功从文件 " << bin_file_path << " 读取 " 
+                << perf_data_list.size() << " 个数据块" << std::endl;
+    } else {
+      std::cerr << "警告：文件 " << bin_file_path << " 未读取到任何数据" << std::endl;
+    }
+  }
+  
+  std::cout << "总共读取 " << merged_perf_data_list.size() << " 个数据块" << std::endl;
+  return merged_perf_data_list;
+}
+
 void PerfShower::processDataWithView(const ViewConfig &view_config, 
                                      const std::vector<UnifiedPerfData> &perf_data_list,
                                      perfetto::Track &view_track) {
@@ -559,6 +581,12 @@ void PerfShower::processDataWithView(const ViewConfig &view_config,
 }
 
 void PerfShower::show(const std::string &show_json_path, const std::string &bin_file_path) {
+  // 调用多文件版本的 show 方法，传入单个文件
+  std::vector<std::string> bin_file_paths = {bin_file_path};
+  show(show_json_path, bin_file_paths);
+}
+
+void PerfShower::show(const std::string &show_json_path, const std::vector<std::string> &bin_file_paths) {
   if (!initialized_) {
     std::cerr << "错误：请先调用 init() 初始化" << std::endl;
     return;
@@ -570,14 +598,12 @@ void PerfShower::show(const std::string &show_json_path, const std::string &bin_
     return;
   }
 
-  // 只读取一次 bin 文件，避免多次读取
-  std::cout << "读取性能数据文件: " << bin_file_path << std::endl;
-  auto perf_data_list = readPerfDataFromFile(bin_file_path);
+  // 从多个文件读取性能数据并合并
+  auto perf_data_list = readPerfDataFromFiles(bin_file_paths);
   if (perf_data_list.empty()) {
     std::cerr << "错误：未能从文件读取到任何数据" << std::endl;
     return;
   }
-  std::cout << "成功读取 " << perf_data_list.size() << " 个数据块" << std::endl;
 
   auto &system_track = perfetto_wrapper_.getSystemTrack();
   int view_rank = 0;
