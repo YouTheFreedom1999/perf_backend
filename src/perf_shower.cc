@@ -61,7 +61,9 @@ void PerfShower::processInstruction(
   // 处理所有 stages
   for (const auto &stage : inst.stages()) {
     assert(stage.start_time() <= stage.end_time());
-    perfetto_wrapper_.addTraceEvent(stage.name(), *track, stage.start_time(),
+    // show_title 作为 event 名字，如果为空则使用 name
+    std::string event_name = stage.show_title().empty() ? stage.name() : stage.show_title();
+    perfetto_wrapper_.addTraceEvent(event_name, *track, stage.start_time(),
                                     stage.end_time(), inst.metadata(),
                                     stage.metadata());
   }
@@ -156,7 +158,13 @@ void PerfShower::processPipMode(
     int cnt = 0;
     // 遍历每个track 会按照字典序排列
     for (auto &track : track_stage_queue_vec) {
-      auto stage_name = stage_it.first + "_" + std::to_string(cnt++);
+      // 如果只有一个 track，不加后缀；否则加 _0, _1 等后缀
+      std::string stage_name;
+      if (track_stage_queue_vec.size() == 1) {
+        stage_name = stage_it.first;
+      } else {
+        stage_name = stage_it.first + "_" + std::to_string(cnt++);
+      }
       auto track_name = stage_name;
       auto track_ptr = perfetto_wrapper_.createNamedTrack(
           track_name, stage_name, parent_track, track_rank_id++, false);
@@ -164,9 +172,11 @@ void PerfShower::processPipMode(
       // 遍历track中的每个stage
       while (!track.empty()) {
         const auto *stage = track.front().first;
+        // show_title 作为 event 名字，如果为空则使用 name
+        std::string event_name = stage->show_title().empty() ? stage->name() : stage->show_title();
         // 使用 instruction 的 global_seq_num 作为 flow_id
         perfetto_wrapper_.addTraceEvent(
-            stage->name(), *track_ptr, stage->start_time(), stage->end_time(),
+            event_name, *track_ptr, stage->start_time(), stage->end_time(),
             (*(track.front().second)), stage->metadata());
         track.pop();
       }
@@ -188,7 +198,9 @@ void PerfShower::processLineMode(
     
     // 按照 stage 的顺序线性添加
     for (const auto &stage : inst.stages()) {
-      perfetto_wrapper_.addTraceEvent(stage.name(), *track, stage.start_time(),
+      // show_title 作为 event 名字，如果为空则使用 name
+      std::string event_name = stage.show_title().empty() ? stage.name() : stage.show_title();
+      perfetto_wrapper_.addTraceEvent(event_name, *track, stage.start_time(),
                                       stage.end_time(), inst.metadata(),
                                       stage.metadata());
     }
@@ -524,9 +536,11 @@ void PerfShower::processDataWithView(const ViewConfig &view_config,
       filtered_inst.clear_stages();
       
       for (const auto &stage : inst.stages()) {
+        // show_title 作为 event 名字，如果为空则使用 name
+        std::string event_name = stage.show_title().empty() ? stage.name() : stage.show_title();
         if (passTimelineFilter(view_config.timeline_filter, 
                                stage.start_time(), stage.end_time()) &&
-            passEventFilter(view_config.event_filter, stage.name())) {
+            passEventFilter(view_config.event_filter, event_name)) {
           auto *new_stage = filtered_inst.add_stages();
           new_stage->CopyFrom(stage);
           has_valid_stage = true;
@@ -563,9 +577,11 @@ void PerfShower::processDataWithView(const ViewConfig &view_config,
       filtered_inst.clear_stages();
       
       for (const auto &stage : inst.stages()) {
+        // show_title 作为 event 名字，如果为空则使用 name
+        std::string event_name = stage.show_title().empty() ? stage.name() : stage.show_title();
         if (passTimelineFilter(view_config.timeline_filter, 
                                stage.start_time(), stage.end_time()) &&
-            passEventFilter(view_config.event_filter, stage.name())) {
+            passEventFilter(view_config.event_filter, event_name)) {
           auto *new_stage = filtered_inst.add_stages();
           new_stage->CopyFrom(stage);
           has_valid_stage = true;
