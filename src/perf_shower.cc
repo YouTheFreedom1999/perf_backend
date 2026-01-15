@@ -209,38 +209,33 @@ void PerfShower::processLineMode(
 
 void PerfShower::processFuncMode(
     const unified_perf_format::BatchFunction &batch_function,
-    perfetto::Track &parent_track) {
-  std::map<std::string, std::vector<const unified_perf_format::Function *>>
-      function_stack_map;
-  std::map<std::string, std::shared_ptr<perfetto::NamedTrack>>
-      function_track_map;
+    perfetto::Track &parent_track,
+    const std::string &device_name) {
+  // 为每个线程创建一个独立的 track
+  // track 名称格式: "device_thread_<device_name>_t<thread_id>"
+  std::map<uint32_t, std::shared_ptr<perfetto::NamedTrack>> thread_track_map;
 
   for (const auto &func : batch_function.functions()) {
-    auto function_track_name =
-        "function_t" + std::to_string(func.thread_id());
-    if (function_track_map.find(function_track_name) ==
-        function_track_map.end()) {
-      function_track_map[function_track_name] =
-          perfetto_wrapper_.createNamedTrack(function_track_name,
-                                             function_track_name, parent_track,
-                                             func.thread_id());
+    uint32_t thread_id = func.thread_id();
+    
+    // 检查是否已经为该线程创建了 track
+    if (thread_track_map.find(thread_id) == thread_track_map.end()) {
+      std::string track_name = "device_thread_" + device_name + "_t" + 
+                               std::to_string(thread_id);
+      std::string track_display_name = device_name + " Thread " + 
+                                       std::to_string(thread_id);
+      thread_track_map[thread_id] = perfetto_wrapper_.createNamedTrack(
+          track_name, track_display_name, parent_track, thread_id);
     }
-    auto function_track = function_track_map.at(function_track_name);
-    if (func.inst_type() == unified_perf_format::InstType::CALL) {
-      function_stack_map[function_track_name].push_back(&func);
-    } else if (func.inst_type() == unified_perf_format::InstType::RET) {
-      if (!function_stack_map[function_track_name].empty()) {
-        perfetto_wrapper_.addTraceEvent(
-            func.name(), *function_track,
-            function_stack_map[function_track_name].back()->timestamp(),
-            func.timestamp(), func.metadata(), MetadataMap());
-        function_stack_map[function_track_name].pop_back();
-      }
-    } else if (func.inst_type() == unified_perf_format::InstType::POINT_SHOW) {
-      perfetto_wrapper_.addTraceEvent(func.name(), *function_track,
-                                      func.timestamp(), func.timestamp(),
-                                      func.metadata(), MetadataMap());
-    }
+    
+    auto thread_track = thread_track_map.at(thread_id);
+    
+    // 使用新的 Function 格式：直接使用 start_timestamp 和 end_timestamp
+    // 每个 Function 代表一个时间范围，直接添加为 trace event
+    perfetto_wrapper_.addTraceEvent(
+        func.name(), *thread_track,
+        func.start_timestamp(), func.end_timestamp(),
+        func.metadata(), MetadataMap());
   }
 }
 
@@ -608,8 +603,9 @@ void PerfShower::processDataWithView(const ViewConfig &view_config,
         continue;
       }
       
+      // 使用新的 Function 格式：start_timestamp 和 end_timestamp
       if (passTimelineFilter(view_config.timeline_filter, 
-                             func.timestamp(), func.timestamp()) &&
+                             func.start_timestamp(), func.end_timestamp()) &&
           passEventFilter(view_config.event_filter, func.name())) {
         auto *new_func = filtered_batch.add_functions();
         new_func->CopyFrom(func);
@@ -617,7 +613,7 @@ void PerfShower::processDataWithView(const ViewConfig &view_config,
     }
     
     if (filtered_batch.functions_size() > 0) {
-      processFuncMode(filtered_batch, *device_track);
+      processFuncMode(filtered_batch, *device_track, device_name);
     }
     
   } else if (view_config.mode == "cnt" && perf_data.has_counters()) {

@@ -20,20 +20,12 @@ message Instruction{
     repeated Stage stages = 6;
 };
 
-enum InstType{
-   UNKNOWN = 0;
-   CALL=1;
-   RET=2;
-   POINT_SHOW = 3;
-};
-
 message Function{
     string name = 1;
     uint32 thread_id = 2;
-    uint64 pc = 3;
-    uint64 timestamp = 4;
-    InstType inst_type = 5;
-    map<string, string> metadata = 6;
+    uint64 start_timestamp = 3;
+    uint64 end_timestamp = 4;
+    map<string, string> metadata = 5;
 };
 
 message CntValue{

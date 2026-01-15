@@ -133,9 +133,9 @@ void InitializePerfetto() {
 int main() {
     GOOGLE_PROTOBUF_VERIFY_VERSION;
 
-    ReadInstructions();
-    ReadFunctions();
-    ReadCounters();
+    // ReadInstructions();
+    // ReadFunctions();
+    // ReadCounters();
 
     InitializePerfetto();
 

@@ -87,9 +87,13 @@ private:
 
   /**
    * 处理 Func 模式
+   * @param batch_function 函数批次数据
+   * @param parent_track 父轨道
+   * @param device_name 设备名称，用于创建 track 名称
    */
   void processFuncMode(const unified_perf_format::BatchFunction &batch_function,
-                       perfetto::Track &parent_track);
+                       perfetto::Track &parent_track,
+                       const std::string &device_name);
 
   /**
    * 处理 Cnt 模式

@@ -62,7 +62,7 @@ void PerfettoWrapper::end(const std::string &perf_path) {
   output.write(&trace_data[0], std::streamsize(trace_data.size()));
   output.close();
 
-  printf("Trace文件已保存为: %s (大小: %zu 字节)\n", perf_path.c_str(), trace_data.size());
+  std::cout << "Trace文件已保存为: " << perf_path << " (大小: " << trace_data.size() << " 字节)" << std::endl;
 }
 
 std::shared_ptr<perfetto::NamedTrack> PerfettoWrapper::createNamedTrack(

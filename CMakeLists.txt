@@ -35,12 +35,12 @@ target_link_libraries(perfetto Threads::Threads ${CMAKE_DL_LIBS})
 protobuf_generate_cpp(PROTO_SRCS PROTO_HDRS proto/unified_perf_format.proto)
 
 # Unified Format Generator
-add_executable(unified_generator src/unified_generator.cc ${PROTO_SRCS} ${PROTO_HDRS})
-target_link_libraries(unified_generator ${Protobuf_LIBRARIES} perfetto) # Still link for generator usage if needed, or remove if dynamic only
+# add_executable(unified_generator src/unified_generator.cc ${PROTO_SRCS} ${PROTO_HDRS})
+# target_link_libraries(unified_generator ${Protobuf_LIBRARIES} perfetto) # Still link for generator usage if needed, or remove if dynamic only
 
 # Unified Format Processor
-add_executable(unified_processor src/unified_processor.cc ${PROTO_SRCS} ${PROTO_HDRS})
-target_link_libraries(unified_processor ${Protobuf_LIBRARIES} perfetto ${CMAKE_DL_LIBS})
+# add_executable(unified_processor src/unified_processor.cc ${PROTO_SRCS} ${PROTO_HDRS})
+# target_link_libraries(unified_processor ${Protobuf_LIBRARIES} perfetto ${CMAKE_DL_LIBS})
 
 # PerfShower Main Executable
 add_executable(perf_shower_main 
