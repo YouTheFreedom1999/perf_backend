@@ -521,6 +521,7 @@ void PerfShower::processDataWithView(const ViewConfig &view_config,
     unified_perf_format::BatchInstruction filtered_batch;
     
     for (const auto &inst : batch_instruction.instructions()) {
+      // 应用所有可用的过滤器
       if (!passThreadFilter(view_config.thread_filter, inst.thread_id())) {
         continue;
       }
@@ -531,6 +532,11 @@ void PerfShower::processDataWithView(const ViewConfig &view_config,
       filtered_inst.clear_stages();
       
       for (const auto &stage : inst.stages()) {
+        // track_filter 过滤 stage 的 name（pipe mode 中 track 是按 stage name 分组的）
+        if (!passTrackFilter(view_config.track_filter, stage.name())) {
+          continue;
+        }
+        
         // show_title 作为 event 名字，如果为空则使用 name
         std::string event_name = stage.show_title().empty() ? stage.name() : stage.show_title();
         if (passTimelineFilter(view_config.timeline_filter, 
@@ -562,7 +568,11 @@ void PerfShower::processDataWithView(const ViewConfig &view_config,
     unified_perf_format::BatchInstruction filtered_batch;
     
     for (const auto &inst : batch_instruction.instructions()) {
+      // 应用所有可用的过滤器
       if (!passThreadFilter(view_config.thread_filter, inst.thread_id())) {
+        continue;
+      }
+      if (!passTrackFilter(view_config.track_filter, inst.name())) {
         continue;
       }
       
@@ -599,7 +609,11 @@ void PerfShower::processDataWithView(const ViewConfig &view_config,
     unified_perf_format::BatchFunction filtered_batch;
     
     for (const auto &func : batch_function.functions()) {
+      // 应用所有可用的过滤器
       if (!passThreadFilter(view_config.thread_filter, func.thread_id())) {
+        continue;
+      }
+      if (!passTrackFilter(view_config.track_filter, func.name())) {
         continue;
       }
       
@@ -622,7 +636,11 @@ void PerfShower::processDataWithView(const ViewConfig &view_config,
     unified_perf_format::BatchCounter filtered_batch;
     
     for (const auto &cnt : batch_counter.counters()) {
+      // 应用所有可用的过滤器
       if (!passTrackFilter(view_config.track_filter, cnt.name())) {
+        continue;
+      }
+      if (!passEventFilter(view_config.event_filter, cnt.name())) {
         continue;
       }
       
