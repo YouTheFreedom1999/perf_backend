@@ -6,6 +6,7 @@
 #include <string>
 #include <vector>
 #include <map>
+#include <unordered_map>
 
 /**
  * 过滤器规则：支持字符串匹配
@@ -34,6 +35,16 @@ struct JsonConfig {
   std::map<std::string, ViewConfig> views;  // 视图配置映射
   std::vector<std::string> filelist;        // 输入文件列表
   std::string output;                       // 输出文件路径
+  std::string kernel;                       // kernel 名称
+  std::string role_path;                    // role.json 文件路径
+};
+
+/**
+ * Role 配置：线程ID到名称的映射
+ */
+struct RoleConfig {
+  int numThread = 0;
+  std::unordered_map<uint32_t, std::string> thread_name_map;  // thread_id -> name
 };
 
 /**
@@ -157,8 +168,23 @@ private:
    */
   std::vector<unified_perf_format::UnifiedPerfData> readPerfDataFromFiles(const std::vector<std::string> &bin_file_paths);
 
+  /**
+   * 加载 role 配置
+   * @param role_path role.json 文件路径
+   * @return 加载的 role 配置
+   */
+  RoleConfig loadRoleConfig(const std::string &role_path);
+
+  /**
+   * 根据线程ID获取角色名称
+   * @param thread_id 线程ID
+   * @return 角色名称，如果未找到则返回空字符串
+   */
+  std::string getRoleName(uint32_t thread_id) const;
+
   PerfettoWrapper perfetto_wrapper_;
   bool initialized_;
+  RoleConfig role_config_;  // Role 配置，用于线程名称映射
 };
 
 #endif // PERF_SHOWER_HH

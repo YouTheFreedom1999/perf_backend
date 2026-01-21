@@ -27,6 +27,49 @@ using json = nlohmann::json;
 
 typedef const google::protobuf::Map<std::string, std::string> MetadataMap;
 
+RoleConfig PerfShower::loadRoleConfig(const std::string &role_path) {
+  RoleConfig config;
+  
+  std::ifstream file(role_path);
+  if (!file.is_open()) {
+    std::cerr << "警告：无法打开 role.json 文件 " << role_path << std::endl;
+    return config;
+  }
+
+  json j;
+  try {
+    file >> j;
+  } catch (const json::parse_error &e) {
+    std::cerr << "警告：role.json 解析失败: " << e.what() << std::endl;
+    return config;
+  }
+
+  if (j.contains("numThread") && j["numThread"].is_number()) {
+    config.numThread = j["numThread"].get<int>();
+  }
+
+  if (j.contains("role") && j["role"].is_array()) {
+    for (const auto &role_item : j["role"]) {
+      if (role_item.contains("tid") && role_item.contains("name")) {
+        uint32_t tid = role_item["tid"].get<uint32_t>();
+        std::string name = role_item["name"].get<std::string>();
+        config.thread_name_map[tid] = name;
+      }
+    }
+  }
+
+  std::cout << "加载 role 配置: " << config.numThread << " 个线程" << std::endl;
+  return config;
+}
+
+std::string PerfShower::getRoleName(uint32_t thread_id) const {
+  auto it = role_config_.thread_name_map.find(thread_id);
+  if (it != role_config_.thread_name_map.end()) {
+    return it->second;
+  }
+  return "";
+}
+
 PerfShower::PerfShower() : initialized_(false) {
   GOOGLE_PROTOBUF_VERIFY_VERSION;
 }
@@ -83,16 +126,26 @@ void PerfShower::processPipMode(
   enum TrackPolicy { SMALL_FIRST, LAST_STEP_FIRST };
   TrackPolicy track_policy = SMALL_FIRST; // 默认使用 SMALL_FIRST 策略
 
-  std::map<
-      std::string,
-      std::vector<std::pair<const unified_perf_format::Stage *, MetadataMap *>>>
-      stage_map;
+  // 定义包含 stage、metadata 和 thread_id 的结构
+  struct StageWithThread {
+    const unified_perf_format::Stage* stage;
+    const MetadataMap* metadata;
+    uint32_t thread_id;
+  };
 
-  // 将所有 stage 按照 name 分组
+  std::map<std::string, std::vector<StageWithThread>> stage_map;
+
+  // 将所有 stage 按照 name 分组，同时记录每个 stage 对应的 thread_id
   for (const auto &inst : batch_instruction.instructions()) {
+    uint32_t thread_id = inst.thread_id();
     for (const auto &st : inst.stages()) {
       assert(st.start_time() <= st.end_time());
-      stage_map[st.name()].push_back(std::make_pair(&st, &inst.metadata()));
+      // 创建 StageWithThread 结构体并添加到 stage_map
+      StageWithThread swt;
+      swt.stage = &st;
+      swt.metadata = &inst.metadata();
+      swt.thread_id = thread_id;
+      stage_map[st.name()].push_back(swt);
     }
   }
 
@@ -100,10 +153,8 @@ void PerfShower::processPipMode(
   for (auto &[name, stages] : stage_map) {
     std::sort(
         stages.begin(), stages.end(),
-        [](const std::pair<const unified_perf_format::Stage *, MetadataMap *>
-               &a,
-           const std::pair<const unified_perf_format::Stage *, MetadataMap *>
-               &b) { return a.first->start_time() < b.first->start_time(); });
+        [](const StageWithThread &a,
+           const StageWithThread &b) { return a.stage->start_time() < b.stage->start_time(); });
   }
 
   // stage_map = {
@@ -113,19 +164,18 @@ void PerfShower::processPipMode(
   int track_rank_id = 0;
 
   for (auto &stage_it : stage_map) {
-    std::vector<std::queue<
-        std::pair<const unified_perf_format::Stage *, MetadataMap *>>>
+    std::vector<std::queue<StageWithThread>>
         track_stage_queue_vec;
     int last_step_idx = 0;
 
-    for (auto stage_ptr : stage_it.second) {
+    for (auto stage_with_thread : stage_it.second) {
       bool found_track = false;
       // 找到一个不重叠的track
       if (track_policy == SMALL_FIRST) {
         for (auto &track : track_stage_queue_vec) {
           if (!track.empty() &&
-              !stagesOverlap(*track.back().first, *stage_ptr.first)) {
-            track.push(stage_ptr);
+              !stagesOverlap(*track.back().stage, *stage_with_thread.stage)) {
+            track.push(stage_with_thread);
             found_track = true;
             break;
           }
@@ -135,9 +185,9 @@ void PerfShower::processPipMode(
         for (int idx = last_step_idx; cnt < track_stage_queue_vec.size();
              idx = (idx + 1) % track_stage_queue_vec.size()) {
           if (!track_stage_queue_vec[idx].empty() &&
-              !stagesOverlap(*track_stage_queue_vec[idx].back().first,
-                             *stage_ptr.first)) {
-            track_stage_queue_vec[idx].push(stage_ptr);
+              !stagesOverlap(*track_stage_queue_vec[idx].back().stage,
+                             *stage_with_thread.stage)) {
+            track_stage_queue_vec[idx].push(stage_with_thread);
             found_track = true;
             last_step_idx = idx;
             break;
@@ -148,9 +198,8 @@ void PerfShower::processPipMode(
       // 如果没找到，创建一个新track
       if (!found_track) {
         track_stage_queue_vec.push_back(
-            std::queue<std::pair<const unified_perf_format::Stage *,
-                                 MetadataMap *>>());
-        track_stage_queue_vec.back().push(stage_ptr);
+            std::queue<StageWithThread>());
+        track_stage_queue_vec.back().push(stage_with_thread);
         last_step_idx = track_stage_queue_vec.size() - 1;
       }
     }
@@ -171,13 +220,27 @@ void PerfShower::processPipMode(
 
       // 遍历track中的每个stage
       while (!track.empty()) {
-        const auto *stage = track.front().first;
-        // show_title 作为 event 名字，如果为空则使用 name
-        std::string event_name = stage->show_title().empty() ? stage->name() : stage->show_title();
+        const auto &stage_with_thread = track.front();
+        const auto *stage = stage_with_thread.stage;
+        
+        // 确定 event 名称的优先级：
+        // 1. 使用 role 名称（如果存在）
+        // 2. 否则使用 show_title（如果非空）
+        // 3. 最后使用 stage name
+        std::string event_name;
+        std::string role_name = getRoleName(stage_with_thread.thread_id);
+        if (!role_name.empty()) {
+          event_name = role_name;
+        } else if (!stage->show_title().empty()) {
+          event_name = stage->show_title();
+        } else {
+          event_name = stage->name();
+        }
+        
         // 使用 instruction 的 global_seq_num 作为 flow_id
         perfetto_wrapper_.addTraceEvent(
             event_name, *track_ptr, stage->start_time(), stage->end_time(),
-            (*(track.front().second)), stage->metadata());
+            (*(stage_with_thread.metadata)), stage->metadata());
         track.pop();
       }
     }
@@ -222,8 +285,17 @@ void PerfShower::processFuncMode(
     if (thread_track_map.find(thread_id) == thread_track_map.end()) {
       std::string track_name = "device_thread_" + device_name + "_t" + 
                                std::to_string(thread_id);
-      std::string track_display_name = device_name + " Thread " + 
-                                       std::to_string(thread_id);
+      
+      // 优先使用 role 名称，如果没有则使用默认格式
+      std::string role_name = getRoleName(thread_id);
+      std::string track_display_name;
+      if (!role_name.empty()) {
+        track_display_name = role_name;
+      } else {
+        track_display_name = device_name + " Thread " + 
+                           std::to_string(thread_id);
+      }
+      
       thread_track_map[thread_id] = perfetto_wrapper_.createNamedTrack(
           track_name, track_display_name, parent_track, thread_id);
     }
@@ -289,8 +361,9 @@ JsonConfig PerfShower::parseShowJson(const std::string &json_path) {
   // 解析视图配置
   for (auto it = j.begin(); it != j.end(); ++it) {
     const std::string &view_name = it.key();
-    // 跳过 "filelist" 和 "output" 字段，它们不是视图配置
-    if (view_name == "filelist" || view_name == "output") {
+    // 跳过 "filelist"、"output"、"kernel" 和 "role" 字段，它们不是视图配置
+    if (view_name == "filelist" || view_name == "output" || 
+        view_name == "kernel" || view_name == "role") {
       continue;
     }
     
@@ -326,6 +399,18 @@ JsonConfig PerfShower::parseShowJson(const std::string &json_path) {
     parseFilterArray("thread_filter", view_config.thread_filter);
 
     config.views[view_name] = view_config;
+  }
+
+  // 解析 kernel 字段
+  if (j.contains("kernel") && j["kernel"].is_string()) {
+    config.kernel = j["kernel"].get<std::string>();
+    std::cout << "从 JSON 配置中读取到 kernel 名称: " << config.kernel << std::endl;
+  }
+
+  // 解析 role 字段
+  if (j.contains("role") && j["role"].is_string()) {
+    config.role_path = j["role"].get<std::string>();
+    std::cout << "从 JSON 配置中读取到 role 路径: " << config.role_path << std::endl;
   }
 
   return config;
@@ -687,6 +772,11 @@ std::string PerfShower::show(const std::string &show_json_path) {
   if (json_config.views.empty()) {
     std::cerr << "错误：没有找到有效的视图配置" << std::endl;
     return output_path;
+  }
+
+  // 加载 role 配置
+  if (!json_config.role_path.empty()) {
+    role_config_ = loadRoleConfig(json_config.role_path);
   }
 
   // 从 JSON 配置中读取 filelist
